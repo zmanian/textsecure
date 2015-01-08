@@ -52,17 +52,10 @@ func init() {
 }
 
 var (
+	red   = "\x1b[31m"
 	green = "\x1b[32m"
 	blue  = "\x1b[34m"
 )
-
-// echoMessageHandler simply echoes what is was sent
-func echoMessageHandler(source string, message string) {
-	err := textsecure.SendMessage(source, message)
-	if err != nil {
-		log.Println(err)
-	}
-}
 
 // conversationLoop sends messages read from the console
 func conversationLoop() {
@@ -78,22 +71,52 @@ func conversationLoop() {
 	}
 }
 
-// conversationMessageHandler prints messages received
-func conversationMessageHandler(source string, message string) {
+func messageHandler(msg *textsecure.Message) {
+	if echo {
+		err := textsecure.SendMessage(msg.Source(), msg.Message())
+		if err != nil {
+			log.Println(err)
+		}
+		return
+	}
 
-	fmt.Printf("\rSource:%s\n                                               %s%s%s\n>", source, green, message, blue)
+	if msg.Message() != "" {
+		fmt.Printf("\r                                               %s%s : %s%s%s\n>", red, getName(msg.Source()), green, msg.Message(), blue)
+	}
+
+	for _, a := range msg.Attachments() {
+		handleAttachment(msg.Source(), a)
+	}
+
 	// if no peer was specified on the command line, start a conversation with the first one contacting us
-	i, err := findSession(sessions, source)
-	if err != nil {
-		sessions = append(sessions, Session{to: source})
-		activeSession = &sessions[len(sessions)-1]
-
-	} else {
-		activeSession = &sessions[i]
-
+	if to == "" {
+		to = msg.Source()
+		go conversationLoop()
 	}
 	go conversationLoop()
 }
+
+func handleAttachment(src string, b []byte) {
+	f, err := ioutil.TempFile(".", "TextSecure_Attachment")
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	log.Printf("Saving attachment of length %d from %s to %s", len(b), src, f.Name())
+	f.Write(b)
+
+}
+
+// getName returns the local contact name corresponding to a phone number,
+// or failing to find a contact the phone number itself
+func getName(tel string) string {
+	if n, ok := telToName[tel]; ok {
+		return n
+	}
+	return tel
+}
+
+var telToName map[string]string
 
 func main() {
 	flag.Parse()
@@ -101,64 +124,57 @@ func main() {
 	client := &textsecure.Client{
 		RootDir:        ".",
 		ReadLine:       textsecure.ConsoleReadLine,
-		MessageHandler: conversationMessageHandler,
+		MessageHandler: messageHandler,
 	}
 	textsecure.Setup(client)
 
-	// Enter echo mode
-	if echo {
-		client.MessageHandler = echoMessageHandler
-		textsecure.ListenForMessages()
-	}
-
-	// If "to" matches a contact name then get its phone number, otherwise assume "to" is a phone number
-	for _, c := range textsecure.GetRegisteredContacts() {
-		if strings.EqualFold(c.Name, to) {
-			to = c.Tel
-			break
+	if !echo {
+		contacts, err := textsecure.GetRegisteredContacts()
+		if err != nil {
+			log.Printf("Could not get contacts: %s\n", err)
 		}
-	}
 
+		telToName = make(map[string]string)
+		for _, c := range contacts {
+			telToName[c.Tel] = c.Name
+		}
 	if fingerprint != "" {
 		textsecure.ShowFingerprint(fingerprint)
 		return
 	}
 
-	if to != "" {
-		sessions = append(sessions, Session{to})
-		activeSession = &sessions[0]
-		// Send attachment with optional message then exit
-		if attachment != "" {
-			err := textsecure.SendFileAttachment(activeSession.to, message, attachment)
-			if err != nil {
-				log.Fatal(err)
+		// If "to" matches a contact name then get its phone number, otherwise assume "to" is a phone number
+		for _, c := range contacts {
+			if strings.EqualFold(c.Name, to) {
+				to = c.Tel
+				break
 			}
-			return
 		}
-
-		// Send a message then exit
-		if message != "" {
-			err := textsecure.SendMessage(activeSession.to, message)
-			if err != nil {
-				log.Fatal(err)
+		if to != "" {
+			// Send attachment with optional message then exit
+			if attachment != "" {
+				err := textsecure.SendFileAttachment(to, message, attachment)
+				if err != nil {
+					log.Fatal(err)
+				}
+				return
 			}
-			return
-		}
+			// Send a message then exit
+			if message != "" {
+				err := textsecure.SendMessage(to, message)
+				if err != nil {
+					log.Fatal(err)
+				}
+				return
+			}
 
-		// Enter conversation mode
-		go conversationLoop()
+			// Enter conversation mode
+			go conversationLoop()
+		}
 	}
 
-	client.AttachmentHandler = func(src string, b []byte) {
-		f, err := ioutil.TempFile(".", "TextSecure_Attachment")
-		if err != nil {
-			log.Println(err)
-			return
-		}
-		log.Printf("Saving attachment of length %d from %s to %s", len(b), src, f.Name())
-		f.Write(b)
-
+	err := textsecure.ListenForMessages()
+	if err != nil {
+		log.Println(err)
 	}
-	textsecure.ListenForMessages()
-
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/golang/protobuf/proto"
 	"io/ioutil"
 	"log"
 	"mime"
@@ -15,7 +14,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-
+	"github.com/golang/protobuf/proto"
 	"github.com/zmanian/textsecure/axolotl"
 	"github.com/zmanian/textsecure/protobuf"
 )
@@ -118,13 +117,37 @@ func SendFileAttachment(tel, msg string, path string) error {
 	return nil
 }
 
+// Message represents a message received from the peer
+// it can optionally include attachments and be sent to a group
+type Message struct {
+	source      string
+	message     string
+	attachments [][]byte
+	group       string
+}
+
+func (m *Message) Source() string {
+	return m.source
+}
+
+func (m *Message) Message() string {
+	return m.message
+}
+
+func (m *Message) Attachments() [][]byte {
+	return m.attachments
+}
+
+func (m *Message) Group() string {
+	return m.group
+}
+
 type Client struct {
-	RootDir           string
-	ReadLine          func(string) string
-	GetConfig         func() *Config
-	GetLocalContacts  func() ([]Contact, error)
-	MessageHandler    func(string, string)
-	AttachmentHandler func(string, []byte)
+	RootDir          string
+	ReadLine         func(string) string
+	GetConfig        func() *Config
+	GetLocalContacts func() ([]Contact, error)
+	MessageHandler   func(*Message)
 }
 
 var client *Client
@@ -166,33 +189,44 @@ func Setup(c *Client) {
 		identityKey = axolotl.GenerateIdentityKeyPair()
 		textSecureStore.SetIdentityKeyPair(identityKey)
 
-		generatePreKeys()
-		loadPreKeys()
 		setupTransporter()
-		registerDevice()
+		err := registerDevice()
+		if err != nil {
+			log.Fatalf("Coult not register device: %s\n", err)
+		}
 	}
 	registrationInfo.registrationId = textSecureStore.GetLocalRegistrationId()
 	registrationInfo.password = textSecureStore.loadHTTPPassword()
 	registrationInfo.signalingKey = textSecureStore.loadHTTPSignalingKey()
 	setupTransporter()
-	loadPreKeys()
 	identityKey = textSecureStore.GetIdentityKeyPair()
 }
 
-func registerDevice() {
-	generatePreKeyState()
+func registerDevice() error {
 	vt := config.VerificationType
 	if vt == "" {
 		vt = "sms"
 	}
-	code := requestCode(config.Tel, vt)
+	code, err := requestCode(config.Tel, vt)
+	if err != nil {
+		return err
+	}
 	if code == "" {
 		code = readLine("Enter verification number (without the '-')>")
 	}
 	code = strings.Replace(code, "-", "", -1)
-	verifyCode(code)
-	registerPreKeys2()
+	err = verifyCode(code)
+	if err != nil {
+		return err
+	}
+	generatePreKeys()
+	generatePreKeyState()
+	err = registerPreKeys2()
+	if err != nil {
+		return err
+	}
 	log.Println("Registration done")
+	return nil
 }
 
 func ShowFingerprint(id string) {
@@ -264,13 +298,14 @@ func handleMessageBody(src string, b []byte) error {
 		return err
 	}
 
-	for _, a := range atts {
-		if client.AttachmentHandler != nil {
-			client.AttachmentHandler(src, a)
-		}
+	msg := &Message{
+		source:      src,
+		message:     pmc.GetBody(),
+		attachments: atts,
 	}
+
 	if client.MessageHandler != nil {
-		client.MessageHandler(src, pmc.GetBody())
+		client.MessageHandler(msg)
 	}
 	return nil
 }

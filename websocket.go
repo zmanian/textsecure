@@ -5,14 +5,14 @@ package textsecure
 
 import (
 	"encoding/base64"
-	"github.com/golang/protobuf/proto"
 	"github.com/zmanian/textsecure/protobuf"
-	"golang.org/x/net/websocket"
+	"fmt"
 	"log"
 	"net/url"
 	"strings"
 	"time"
-
+	"github.com/golang/protobuf/proto"
+	"golang.org/x/net/websocket"
 	"crypto/tls"
 )
 
@@ -21,7 +21,7 @@ type WSConn struct {
 	id   uint64
 }
 
-func NewWSConn(originURL, user, pass string, skipTLSCheck bool) *WSConn {
+func NewWSConn(originURL, user, pass string, skipTLSCheck bool) (*WSConn, error) {
 	v := url.Values{}
 	v.Set("login", user)
 	v.Set("password", pass)
@@ -30,7 +30,7 @@ func NewWSConn(originURL, user, pass string, skipTLSCheck bool) *WSConn {
 
 	wsConfig, err := websocket.NewConfig(wsURL, originURL)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	if config.SkipTLSCheck {
 		wsConfig.TlsConfig = &tls.Config{InsecureSkipVerify: true}
@@ -38,9 +38,9 @@ func NewWSConn(originURL, user, pass string, skipTLSCheck bool) *WSConn {
 
 	wsc, err := websocket.DialConfig(wsConfig)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	return &WSConn{conn: wsc}
+	return &WSConn{conn: wsc}, nil
 }
 
 func (wsc *WSConn) send(b []byte) {
@@ -78,18 +78,10 @@ func (wsc *WSConn) sendRequest(verb, path string, body []byte, id *uint64) {
 	wsc.send(b)
 }
 
-type wsAck struct {
-	Id   uint64 `json:"id"`
-	Type int    `json:"type"`
-}
-
 func (wsc *WSConn) keepAlive() {
 	for {
-		//		wsc.sendRequest("GET", "/v1/keepalive", nil, nil)
-		pingMsg := wsAck{Id: 0, Type: 1}
-		websocket.JSON.Send(wsc.conn, pingMsg)
-
-		time.Sleep(time.Second * 5)
+		wsc.sendRequest("GET", "/v1/keepalive", nil, nil)
+		time.Sleep(time.Second * 15)
 	}
 }
 
@@ -127,8 +119,11 @@ func (wsc *WSConn) Put(url string, body []byte) (*Response, error) {
 	return nil, nil
 }
 
-func ListenForMessages() {
-	wsc := NewWSConn(config.Server+"/v1/websocket", config.Tel, registrationInfo.password, config.SkipTLSCheck)
+func ListenForMessages() error {
+	wsc, err := NewWSConn(config.Server+"/v1/websocket", config.Tel, registrationInfo.password, config.SkipTLSCheck)
+	if err != nil {
+		return fmt.Errorf("Could not establish websocket connection: %s\n", err)
+	}
 
 	go wsc.keepAlive()
 
@@ -146,7 +141,6 @@ func ListenForMessages() {
 			log.Println("WebSocketMessage unmarshal", err)
 			continue
 		}
-
 		if config.Server == "https://textsecure-service-staging.whispersystems.org:443" {
 			m := wsm.GetRequest().GetBody()
 
