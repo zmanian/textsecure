@@ -355,6 +355,8 @@ func notTrusted(id string) {
 	log.Printf("Identity of remote %s is not trusted, it may have reinstalled\n. For now delete the file .storage/identity/remote_%s to approve.\n", id, id)
 }
 
+// ErrNotTrusted represents the error situation where the peer
+// is using a different identity key than expected.
 var ErrNotTrusted = errors.New("Remote identity not trusted")
 
 func (sb *SessionBuilder) BuildReceiverSession(sr *SessionRecord, pkwm *PreKeyWhisperMessage) (uint32, error) {
@@ -370,7 +372,7 @@ func (sb *SessionBuilder) BuildReceiverSession(sr *SessionRecord, pkwm *PreKeyWh
 		return 0, nil
 	}
 	ourSignedPreKey, _ := sb.signedPreKeyStore.LoadSignedPreKey(pkwm.SignedPreKeyID)
-	bob := BobAxolotlParameters{
+	bob := bobAxolotlParameters{
 		TheirBaseKey:    pkwm.BaseKey,
 		TheirIdentity:   pkwm.IdentityKey,
 		OurIdentityKey:  sb.identityStore.GetIdentityKeyPair(),
@@ -418,7 +420,7 @@ func (sb *SessionBuilder) BuildSenderSession(pkb *PreKeyBundle) error {
 	theirOneTimePreKey := pkb.PreKeyPublic
 	theirOneTimePreKeyID := pkb.PreKeyID
 
-	alice := AliceAxolotlParameters{
+	alice := aliceAxolotlParameters{
 		OurBaseKey:         ourBaseKey,
 		OurIdentityKey:     sb.identityStore.GetIdentityKeyPair(),
 		TheirIdentity:      pkb.IdentityKey,
@@ -528,7 +530,7 @@ func (sc *SessionCipher) decrypt(sr *SessionRecord, ciphertext *WhisperMessage) 
 		return nil, err
 	}
 
-	ciphertext.VerifyMAC(ss.GetRemoteIdentityPublic(), ss.GetLocalIdentityPublic(), messageKeys.MacKey)
+	ciphertext.verifyMAC(ss.GetRemoteIdentityPublic(), ss.GetLocalIdentityPublic(), messageKeys.MacKey)
 
 	plaintext := Decrypt(messageKeys.CipherKey, append(messageKeys.Iv, ciphertext.Ciphertext...))
 

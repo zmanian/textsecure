@@ -108,7 +108,7 @@ func getMac(version byte, senderIdentity, receiverIdentity *IdentityKey, macKey,
 	return ComputeTruncatedMAC(msg, macKey, macLength)
 }
 
-func (wm *WhisperMessage) VerifyMAC(senderIdentity, receiverIdentity *IdentityKey, macKey []byte) bool {
+func (wm *WhisperMessage) verifyMAC(senderIdentity, receiverIdentity *IdentityKey, macKey []byte) bool {
 	macpos := len(wm.serialized) - macLength
 
 	ourMAC := getMac(wm.Version, senderIdentity, receiverIdentity, macKey, wm.serialized[:macpos])

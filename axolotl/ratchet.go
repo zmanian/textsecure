@@ -12,7 +12,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 )
 
-type SymmetricAxolotlParameters struct {
+type symmetricAxolotlParameters struct {
 	OurIdentityKey IdentityKeyPair
 	OurBaseKey     ECKeyPair
 	OurRatchetKey  ECKeyPair
@@ -22,7 +22,7 @@ type SymmetricAxolotlParameters struct {
 	TheirRatchetKey ECPublicKey
 }
 
-type AliceAxolotlParameters struct {
+type aliceAxolotlParameters struct {
 	OurIdentityKey *IdentityKeyPair
 	OurBaseKey     *ECKeyPair
 
@@ -32,7 +32,7 @@ type AliceAxolotlParameters struct {
 	TheirRatchetKey    *ECPublicKey
 }
 
-type BobAxolotlParameters struct {
+type bobAxolotlParameters struct {
 	OurIdentityKey   *IdentityKeyPair
 	OurSignedPreKey  *ECKeyPair
 	OurOneTimePreKey *ECKeyPair
@@ -170,7 +170,7 @@ func calculateAgreement(result, theirPub, ourPriv *[32]byte) {
 	curve25519.ScalarMult(result, ourPriv, theirPub)
 }
 
-func InitializeSenderSession(ss *SessionState, version byte, parameters AliceAxolotlParameters) error {
+func InitializeSenderSession(ss *SessionState, version byte, parameters aliceAxolotlParameters) error {
 	ss.SetSessionVersion(uint32(version))
 	ss.SetLocalIdentityPublic(&parameters.OurIdentityKey.PublicKey)
 	ss.SetRemoteIdentityPublic(parameters.TheirIdentity)
@@ -210,7 +210,7 @@ func InitializeSenderSession(ss *SessionState, version byte, parameters AliceAxo
 	return nil
 }
 
-func InitializeReceiverSession(ss *SessionState, version byte, parameters BobAxolotlParameters) error {
+func InitializeReceiverSession(ss *SessionState, version byte, parameters bobAxolotlParameters) error {
 	ss.SetSessionVersion(uint32(version))
 	ss.SetLocalIdentityPublic(&parameters.OurIdentityKey.PublicKey)
 	ss.SetRemoteIdentityPublic(parameters.TheirIdentity)
