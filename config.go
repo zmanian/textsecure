@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Tel              string `yaml:"tel"`
 	Server           string `yaml:"server"`
+	Fingerprint      string `yaml:"fingerprint"`
 	SkipTLSCheck     bool   `yaml:"skipTLSCheck"`
 	VerificationType string `yaml:"verificationType"`
 

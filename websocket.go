@@ -4,16 +4,18 @@
 package textsecure
 
 import (
+	"crypto/tls"
 	"encoding/base64"
-	"github.com/zmanian/textsecure/protobuf"
+	"encoding/hex"
 	"fmt"
+	"github.com/golang/protobuf/proto"
+	"github.com/zmanian/textsecure/protobuf"
+	"golang.org/x/net/websocket"
 	"log"
+	"net"
 	"net/url"
 	"strings"
 	"time"
-	"github.com/golang/protobuf/proto"
-	"golang.org/x/net/websocket"
-	"crypto/tls"
 )
 
 type WSConn struct {
@@ -21,7 +23,40 @@ type WSConn struct {
 	id   uint64
 }
 
-func NewWSConn(originURL, user, pass string, skipTLSCheck bool) (*WSConn, error) {
+func dialWithPin(config *websocket.Config, fingerprint []byte) (ws *websocket.Conn, err error) {
+
+	var client net.Conn
+	if config.Location == nil {
+		return nil, &websocket.DialError{config, websocket.ErrBadWebSocketLocation}
+	}
+	if config.Origin == nil {
+		return nil, &websocket.DialError{config, websocket.ErrBadWebSocketOrigin}
+	}
+	switch config.Location.Scheme {
+	case "ws":
+		client, err = net.Dial("tcp", config.Location.Host)
+
+	case "wss":
+		client, err = makeDialer(fingerprint, config.TlsConfig.InsecureSkipVerify)("tcp", config.Location.Host)
+
+	default:
+		err = websocket.ErrBadScheme
+	}
+	if err != nil {
+		goto Error
+	}
+
+	ws, err = websocket.NewClient(config, client)
+	if err != nil {
+		goto Error
+	}
+	return
+
+Error:
+	return nil, &websocket.DialError{config, err}
+}
+
+func NewWSConn(originURL, user, pass string, skipTLSCheck bool, fingerprint string) (*WSConn, error) {
 	v := url.Values{}
 	v.Set("login", user)
 	v.Set("password", pass)
@@ -35,8 +70,14 @@ func NewWSConn(originURL, user, pass string, skipTLSCheck bool) (*WSConn, error)
 	if config.SkipTLSCheck {
 		wsConfig.TlsConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	pin, err := hex.DecodeString(fingerprint)
+	if err != nil {
+		log.Fatal(err)
+	}
+	wsc, err := dialWithPin(wsConfig, pin)
 
-	wsc, err := websocket.DialConfig(wsConfig)
+	// 	wsc, err := websocket.DialConfig(wsConfig)
+
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +161,7 @@ func (wsc *WSConn) Put(url string, body []byte) (*Response, error) {
 }
 
 func ListenForMessages() error {
-	wsc, err := NewWSConn(config.Server+"/v1/websocket", config.Tel, registrationInfo.password, config.SkipTLSCheck)
+	wsc, err := NewWSConn(config.Server+"/v1/websocket", config.Tel, registrationInfo.password, config.SkipTLSCheck, config.Fingerprint)
 	if err != nil {
 		return fmt.Errorf("Could not establish websocket connection: %s\n", err)
 	}

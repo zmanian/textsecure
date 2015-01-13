@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/golang/protobuf/proto"
+	"github.com/zmanian/textsecure/axolotl"
+	"github.com/zmanian/textsecure/protobuf"
 	"io/ioutil"
 	"log"
 	"mime"
@@ -14,9 +17,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"github.com/golang/protobuf/proto"
-	"github.com/zmanian/textsecure/axolotl"
-	"github.com/zmanian/textsecure/protobuf"
 )
 
 var (
