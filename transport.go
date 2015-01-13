@@ -40,7 +40,7 @@ func makeDialer(fingerprint []byte, skipCAVerification bool) dialer {
 			}
 
 			if bytes.Compare(hash[0:], fingerprint) == 0 {
-				log.Println("Pinned Key found")
+				// log.Println("Pinned Key found")
 				keyPinValid = true
 			}
 		}

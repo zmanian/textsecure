@@ -1,15 +1,18 @@
 #Put your phone number that will get verified by the server here
-tel: "+1771111001"
+tel: ""
 
 #Server URL
-server: https://textsecure-service.whispersystems.org:443
+server: https://textsecure-service-staging.whispersystems.org:443
 
 #This is needed for the official servers
 skipTLSCheck: true
+
+#Fingerpint for the SSL Certificate. TextSecure does not rely on the CA system but on public key pins.
+fingerprint: e221a8c5ad8198c89b06cd5a3995517b69ec0a9b23f0c00cc9a02fb72a612e7e
 
 #Verification via sms or voice
 verificationType: sms
 
 #The local storage uses password base encryption
 #If not present here, the password will be requested on startup
-storagePassword: password
+storagePassword: "none"
