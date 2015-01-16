@@ -197,7 +197,7 @@ type jsonMessage struct {
 	Relay              string `json:"relay,omitempty"`
 }
 
-func createMessage(msg string, a *att) ([]byte, error) {
+func createMessage(msg string, groupID []byte, a *att) ([]byte, error) {
 	pmc := &textsecure.PushMessageContent{}
 	if msg != "" {
 		pmc.Body = &msg
@@ -209,6 +209,13 @@ func createMessage(msg string, a *att) ([]byte, error) {
 				ContentType: &a.ct,
 				Key:         a.keys,
 			},
+		}
+	}
+	if groupID != nil {
+		typ := textsecure.PushMessageContent_GroupContext_DELIVER
+		pmc.Group = &textsecure.PushMessageContent_GroupContext{
+			Type: &typ,
+			Id:   groupID,
 		}
 	}
 	b, err := proto.Marshal(pmc)
@@ -266,9 +273,9 @@ type att struct {
 	keys []byte
 }
 
-func buildMessage(tel string, msg string, a *att) ([]jsonMessage, error) {
+func buildMessage(tel string, msg string, groupID []byte, a *att) ([]jsonMessage, error) {
 	devid := uint32(1) //FIXME: support multiple destination devices
-	paddedMessage, err := createMessage(msg, a)
+	paddedMessage, err := createMessage(msg, groupID, a)
 	if err != nil {
 		return nil, err
 	}
@@ -299,9 +306,9 @@ func buildMessage(tel string, msg string, a *att) ([]jsonMessage, error) {
 	return messages, nil
 }
 
-func sendMessage(tel, msg string) error {
+func sendMessage(tel, msg string, groupID []byte, a *att) error {
 	m := make(map[string]interface{})
-	bm, err := buildMessage(tel, msg, nil)
+	bm, err := buildMessage(tel, msg, groupID, a)
 	if err != nil {
 		return err
 	}
@@ -318,28 +325,6 @@ func sendMessage(tel, msg string) error {
 	if resp.Status == 410 {
 		textSecureStore.DeleteSession(recID(tel), uint32(1))
 		return errors.New("The remote device is gone (probably reinstalled)")
-	}
-	if resp.isError() {
-		return resp
-	}
-	return nil
-}
-
-func sendAttachment(tel string, msg string, a *att) error {
-	m := make(map[string]interface{})
-	bm, err := buildMessage(tel, msg, a)
-	if err != nil {
-		return err
-	}
-	m["messages"] = bm
-	m["destination"] = tel
-	body, err := json.MarshalIndent(m, "", "    ")
-	if err != nil {
-		return err
-	}
-	resp, err := transport.putJSON("/v1/messages/"+tel, body)
-	if err != nil {
-		return err
 	}
 	if resp.isError() {
 		return resp

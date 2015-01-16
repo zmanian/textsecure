@@ -11,19 +11,12 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/zmanian/textsecure/axolotl"
 	"github.com/zmanian/textsecure/protobuf"
-	"io/ioutil"
 	"log"
 	"mime"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-)
-
-var (
-	storageDir string
-	configDir  string
-	configFile string
 )
 
 // Generate a random 16 byte string used for HTTP Basic Authentication to the server
@@ -84,8 +77,6 @@ func decodeSignature(s string) []byte {
 	return b
 }
 
-var config *Config
-
 func needsRegistration() bool {
 	return !textSecureStore.valid()
 }
@@ -94,7 +85,7 @@ var identityKey *axolotl.IdentityKeyPair
 
 // SendMessage sends the given text message to the given contact.
 func SendMessage(tel, msg string) error {
-	err := sendMessage(tel, msg)
+	err := sendMessage(tel, msg, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -114,15 +105,15 @@ func SendFileAttachment(tel, msg string, path string) error {
 	if err != nil {
 		return err
 	}
-	err = sendAttachment(tel, msg, a)
+	err = sendMessage(tel, msg, nil, a)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// Message represents a message received from the peer
-// it can optionally include attachments and be sent to a group
+// Message represents a message received from the peer.
+// It can optionally include attachments and be sent to a group.
 type Message struct {
 	source      string
 	message     string
@@ -130,46 +121,50 @@ type Message struct {
 	group       string
 }
 
+// Source returns the ID of the sender of the message.
 func (m *Message) Source() string {
 	return m.source
 }
 
+// Message returns the message body.
 func (m *Message) Message() string {
 	return m.message
 }
 
+// Attachments returns the list of attachments on the message.
 func (m *Message) Attachments() [][]byte {
 	return m.attachments
 }
 
+// Group returns the group name or empty.
 func (m *Message) Group() string {
 	return m.group
 }
 
 // Client contains application specific data and callbacks.
 type Client struct {
-	RootDir          string
-	ReadLine         func(string) string
-	GetConfig        func() *Config
-	GetLocalContacts func() ([]Contact, error)
-	MessageHandler   func(*Message)
+	RootDir            string
+	ReadLine           func(string) string
+	GetStoragePassword func() string
+	GetConfig          func() (*Config, error)
+	GetLocalContacts   func() ([]Contact, error)
+	MessageHandler     func(*Message)
 }
 
-var client *Client
+var (
+	config *Config
+	client *Client
+)
 
 // Setup initializes the package.
-func Setup(c *Client) {
+func Setup(c *Client) error {
 	var err error
 
 	client = c
 
-	configDir = filepath.Join(client.RootDir, ".config")
-	storageDir = filepath.Join(client.RootDir, ".storage")
-
-	configFile = filepath.Join(configDir, "config.yml")
-	config, err = readConfig(configFile)
+	config, err = loadConfig()
 	if err != nil {
-		log.Panic(err)
+		return err
 	}
 
 	//get password from config file (development only!), if empty read it from the command line
@@ -180,8 +175,8 @@ func Setup(c *Client) {
 	if password == "none" {
 		password = ""
 	}
-	setupStore(password)
-
+	setupStore()
+	
 	if needsRegistration() {
 		registrationInfo.registrationID = generateRegistrationID()
 		textSecureStore.SetLocalRegistrationID(registrationInfo.registrationID)
@@ -198,7 +193,7 @@ func Setup(c *Client) {
 		setupTransporter()
 		err := registerDevice()
 		if err != nil {
-			log.Fatalf("Coult not register device: %s\n", err)
+			return err
 		}
 	}
 	registrationInfo.registrationID = textSecureStore.GetLocalRegistrationID()
@@ -206,6 +201,7 @@ func Setup(c *Client) {
 	registrationInfo.signalingKey = textSecureStore.loadHTTPSignalingKey()
 	setupTransporter()
 	identityKey = textSecureStore.GetIdentityKeyPair()
+	return nil
 }
 
 func registerDevice() error {
@@ -253,44 +249,6 @@ func recID(source string) string {
 	return source[1:]
 }
 
-func handleAttachments(pmc *textsecure.PushMessageContent) ([][]byte, error) {
-	atts := pmc.GetAttachments()
-	if atts == nil {
-		return nil, nil
-	}
-
-	all := make([][]byte, len(atts))
-
-	for i, a := range atts {
-		loc, err := getAttachmentLocation(*a.Id)
-		if err != nil {
-			return nil, err
-		}
-		r, err := getAttachment(loc)
-		if err != nil {
-			return nil, err
-		}
-		defer r.Close()
-
-		b, err := ioutil.ReadAll(r)
-		if err != nil {
-			return nil, err
-		}
-
-		l := len(b) - 32
-		if !verifyMAC(a.Key[32:], b[:l], b[l:]) {
-			return nil, errors.New("Invalid MAC on attachment")
-		}
-
-		b, err = aesDecrypt(a.Key[:32], b[:l])
-		if err != nil {
-			return nil, err
-		}
-		all[i] = b
-	}
-	return all, nil
-}
-
 // handleMessageBody unmarshals the message and calls the client callbacks
 func handleMessageBody(src string, b []byte) error {
 	b = stripPadding(b)
@@ -304,10 +262,16 @@ func handleMessageBody(src string, b []byte) error {
 		return err
 	}
 
+	gr, err := handleGroups(src, pmc)
+	if err != nil {
+		return err
+	}
+
 	msg := &Message{
 		source:      src,
 		message:     pmc.GetBody(),
 		attachments: atts,
+		group:       gr,
 	}
 
 	if client.MessageHandler != nil {
@@ -356,7 +320,10 @@ func handleReceivedMessage(msg []byte) error {
 		if err != nil {
 			return err
 		}
-		handleMessageBody(ipms.GetSource(), b)
+		err = handleMessageBody(ipms.GetSource(), b)
+		if err != nil {
+			return err
+		}
 
 	case textsecure.IncomingPushMessageSignal_PLAINTEXT:
 		pmc := &textsecure.PushMessageContent{}
@@ -373,7 +340,10 @@ func handleReceivedMessage(msg []byte) error {
 		if err != nil {
 			return err
 		}
-		handleMessageBody(ipms.GetSource(), b)
+		err = handleMessageBody(ipms.GetSource(), b)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("Not implemented %d", *ipms.Type)
 	}

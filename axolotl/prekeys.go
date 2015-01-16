@@ -42,6 +42,7 @@ func LoadPreKeyRecord(serialized []byte) *PreKeyRecord {
 	return record
 }
 
+// Serialize marshals the prekey into a protobuf.
 func (record *PreKeyRecord) Serialize() []byte {
 	b, err := proto.Marshal(record.Pkrs)
 	if err != nil {
@@ -50,7 +51,7 @@ func (record *PreKeyRecord) Serialize() []byte {
 	return b
 }
 
-func (record *PreKeyRecord) GetKeyPair() *ECKeyPair {
+func (record *PreKeyRecord) getKeyPair() *ECKeyPair {
 	return MakeECKeyPair(record.Pkrs.GetPrivateKey(), record.Pkrs.GetPublicKey())
 }
 
@@ -100,6 +101,7 @@ func LoadSignedPreKeyRecord(serialized []byte) (*SignedPreKeyRecord, error) {
 	return record, nil
 }
 
+// Serialize marshals the signed prekey into a protobuf.
 func (record *SignedPreKeyRecord) Serialize() []byte {
 	b, err := proto.Marshal(record.Spkrs)
 	if err != nil {
@@ -108,10 +110,12 @@ func (record *SignedPreKeyRecord) Serialize() []byte {
 	return b
 }
 
-func (record *SignedPreKeyRecord) GetKeyPair() *ECKeyPair {
+func (record *SignedPreKeyRecord) getKeyPair() *ECKeyPair {
 	return MakeECKeyPair(record.Spkrs.GetPrivateKey(), record.Spkrs.GetPublicKey())
 }
 
+// PreKeyBundle contains the data required to initialize a sender session.
+// It is constructed from PreKeys registered by the peer.
 type PreKeyBundle struct {
 	RegistrationID uint32
 	DeviceID       uint32
@@ -126,6 +130,7 @@ type PreKeyBundle struct {
 	IdentityKey *IdentityKey
 }
 
+// NewPreKeyBundle creates a PreKeyBundle structure with the given fields.
 func NewPreKeyBundle(registrationID, deviceID, preKeyID uint32, preKey *ECPublicKey,
 	signedPreKeyID int32, signedPreKey *ECPublicKey, signature []byte,
 	identityKey *IdentityKey) (*PreKeyBundle, error) {
