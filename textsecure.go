@@ -168,7 +168,7 @@ func Setup(c *Client) error {
 	}
 
 	setupStore()
-	
+
 	if needsRegistration() {
 		registrationInfo.registrationID = generateRegistrationID()
 		textSecureStore.SetLocalRegistrationID(registrationInfo.registrationID)

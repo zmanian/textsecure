@@ -17,14 +17,13 @@ var (
 
 // Config holds application configuration settings
 type Config struct {
-	Tel              string `yaml:"tel"`
-	Server           string `yaml:"server"`
-	Fingerprint      string `yaml:"fingerprint"`
-	SkipTLSCheck     bool   `yaml:"skipTLSCheck"`
-	VerificationType string `yaml:"verificationType"`
-	UnencryptedStorage bool `yaml:"unencryptedStorage"` // Whether to store plaintext keys and session state (only for development)
-	StoragePassword string `yaml:"storagePassword"`
-
+	Tel                string `yaml:"tel"`
+	Server             string `yaml:"server"`
+	Fingerprint        string `yaml:"fingerprint"`
+	SkipTLSCheck       bool   `yaml:"skipTLSCheck"`
+	VerificationType   string `yaml:"verificationType"`
+	UnencryptedStorage bool   `yaml:"unencryptedStorage"` // Whether to store plaintext keys and session state (only for development)
+	StoragePassword    string `yaml:"storagePassword"`
 }
 
 // readConfig reads a YAML config file

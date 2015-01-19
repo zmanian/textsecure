@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
+	"github.com/jessevdk/go-flags"
+	"github.com/zmanian/textsecure"
+	"golang.org/x/crypto/ssh/terminal"
 	"io/ioutil"
 	"log"
 	"strings"
-	"github.com/zmanian/textsecure"
-	"golang.org/x/crypto/ssh/terminal"
-	"github.com/jessevdk/go-flags"
 )
 
 // Simple command line test app for TextSecure.
@@ -19,7 +19,6 @@ type Session struct {
 }
 
 type Sessions []Session
-
 
 var sessions Sessions
 var activeSession *Session
@@ -40,17 +39,15 @@ type Options struct {
 
 	Group bool `short:"g" long:"group" description:"Destination is a group" default:"false"`
 
-  Message string `short:"m" long:"message" description:"Single message to send, then exit" default:""`
-  
-  Attachment string `short:"a" long:"attachment" description:"File to attach" default:""`
-  
-  Fingerprint string `short:"f" long:"fingerprint" description:"Name of contact to get identity key fingerprint" default:""`
+	Message string `short:"m" long:"message" description:"Single message to send, then exit" default:""`
+
+	Attachment string `short:"a" long:"attachment" description:"File to attach" default:""`
+
+	Fingerprint string `short:"f" long:"fingerprint" description:"Name of contact to get identity key fingerprint" default:""`
 }
 
-
 var options Options
-var	parser = flags.NewParser(&options, flags.Default)
-
+var parser = flags.NewParser(&options, flags.Default)
 
 var (
 	red   = "\x1b[31m"
@@ -110,15 +107,15 @@ func messageHandler(msg *textsecure.Message) {
 
 	// if no peer was specified on the command line, start a conversation with the first one contacting us
 	if options.To == "" {
-	  
-	  i, err := findSession(sessions, msg.Source())
-	  if err != nil {
-	    sessions = append(sessions, Session{to: msg.Source()})
-		  activeSession = &sessions[len(sessions)-1]
-	  }else {
-		  activeSession = &sessions[i]
-	  }
-	  
+
+		i, err := findSession(sessions, msg.Source())
+		if err != nil {
+			sessions = append(sessions, Session{to: msg.Source()})
+			activeSession = &sessions[len(sessions)-1]
+		} else {
+			activeSession = &sessions[i]
+		}
+
 		isGroup := false
 		if msg.Group() != "" {
 			isGroup = true
@@ -160,12 +157,11 @@ func getName(tel string) string {
 var telToName map[string]string
 
 func main() {
-  
+
 	log.SetFlags(0)
 
-
-  if _, err := parser.Parse(); err != nil {
-    log.Fatal(err)
+	if _, err := parser.Parse(); err != nil {
+		log.Fatal(err)
 	}
 
 	client := &textsecure.Client{
@@ -189,10 +185,10 @@ func main() {
 		for _, c := range contacts {
 			telToName[c.Tel] = c.Name
 		}
-	if options.Fingerprint != "" {
-		textsecure.ShowFingerprint(options.Fingerprint)
-		return
-	}
+		if options.Fingerprint != "" {
+			textsecure.ShowFingerprint(options.Fingerprint)
+			return
+		}
 
 		// If "to" matches a contact name then get its phone number, otherwise assume "to" is a phone number
 		for _, c := range contacts {
