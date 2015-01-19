@@ -16,3 +16,6 @@ verificationType: sms
 #The local storage uses password base encryption
 #If not present here, the password will be requested on startup
 storagePassword: "none"
+
+
+unecryptedStorage:true

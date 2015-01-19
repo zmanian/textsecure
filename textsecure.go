@@ -167,14 +167,6 @@ func Setup(c *Client) error {
 		return err
 	}
 
-	//get password from config file (development only!), if empty read it from the command line
-	password := config.StoragePassword
-	if password == "" && password != "none" {
-		password = readLine("Enter store password (empty for unencrypted store):")
-	}
-	if password == "none" {
-		password = ""
-	}
 	setupStore()
 	
 	if needsRegistration() {

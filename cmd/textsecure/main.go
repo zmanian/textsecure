@@ -1,13 +1,13 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"strings"
 	"github.com/zmanian/textsecure"
 	"golang.org/x/crypto/ssh/terminal"
+	"github.com/jessevdk/go-flags"
 )
 
 // Simple command line test app for TextSecure.
@@ -20,6 +20,10 @@ type Session struct {
 
 type Sessions []Session
 
+
+var sessions Sessions
+var activeSession *Session
+
 func findSession(sessions Sessions, recipient string) (int, error) {
 	for index, sess := range sessions {
 		if sess.to == recipient {
@@ -29,30 +33,24 @@ func findSession(sessions Sessions, recipient string) (int, error) {
 	return -1, fmt.Errorf("Session not found")
 }
 
-var (
-	echo          bool
-	to            string
-	message       string
-	attachment    string
-	fingerprint   string
-	group         bool
-	sessions      Sessions
-	activeSession *Session
-)
+type Options struct {
+	Echo bool `short:"e" long:"echo" description:"Act as an echo service" default:"false"`
 
-func init() {
-	flag.BoolVar(&echo, "echo", false, "Act as an echo service")
-	flag.StringVar(&to, "to", "", "Contact name to send the message to")
-	flag.StringVar(&to, "t", "", "Contact name to send the message to")
-	flag.BoolVar(&group, "group", false, "Destination is a group")
-	flag.BoolVar(&group, "g", false, "Destination is a group")
-	flag.StringVar(&message, "message", "", "Single message to send, then exit")
-	flag.StringVar(&message, "m", "", "Single message to send, then exit")
-	flag.StringVar(&attachment, "attachment", "", "File to attach")
-	flag.StringVar(&attachment, "a", "", "File to attach")
-	flag.StringVar(&fingerprint, "fingerprint", "", "Name of contact to get identity key fingerprint")
-	flag.StringVar(&fingerprint, "f", "", "Name of contact to get identity key fingerprint")
+	To string `short:"t" long:"to" description:"Contact name to send the message to" default:"" `
+
+	Group bool `short:"g" long:"group" description:"Destination is a group" default:"false"`
+
+  Message string `short:"m" long:"message" description:"Single message to send, then exit" default:""`
+  
+  Attachment string `short:"a" long:"attachment" description:"File to attach" default:""`
+  
+  Fingerprint string `short:"f" long:"fingerprint" description:"Name of contact to get identity key fingerprint" default:""`
 }
+
+
+var options Options
+var	parser = flags.NewParser(&options, flags.Default)
+
 
 var (
 	red   = "\x1b[31m"
@@ -79,9 +77,9 @@ func conversationLoop(isGroup bool) {
 		}
 		var err error
 		if isGroup {
-			err = textsecure.SendGroupMessage(to, message)
+			err = textsecure.SendGroupMessage(activeSession.to, message)
 		} else {
-			err = textsecure.SendMessage(to, message)
+			err = textsecure.SendMessage(activeSession.to, message)
 		}
 		if err != nil {
 			log.Println(err)
@@ -90,7 +88,7 @@ func conversationLoop(isGroup bool) {
 }
 
 func messageHandler(msg *textsecure.Message) {
-	if echo {
+	if options.Echo {
 		if msg.Group() != "" {
 			textsecure.SendGroupMessage(msg.Group(), msg.Message())
 			return
@@ -111,12 +109,20 @@ func messageHandler(msg *textsecure.Message) {
 	}
 
 	// if no peer was specified on the command line, start a conversation with the first one contacting us
-	if to == "" {
-		to = msg.Source()
+	if options.To == "" {
+	  
+	  i, err := findSession(sessions, msg.Source())
+	  if err != nil {
+	    sessions = append(sessions, Session{to: msg.Source()})
+		  activeSession = &sessions[len(sessions)-1]
+	  }else {
+		  activeSession = &sessions[i]
+	  }
+	  
 		isGroup := false
 		if msg.Group() != "" {
 			isGroup = true
-			to = msg.Group()
+			options.To = msg.Group()
 		}
 		go conversationLoop(isGroup)
 	}
@@ -154,8 +160,14 @@ func getName(tel string) string {
 var telToName map[string]string
 
 func main() {
-	flag.Parse()
+  
 	log.SetFlags(0)
+
+
+  if _, err := parser.Parse(); err != nil {
+    log.Fatal(err)
+	}
+
 	client := &textsecure.Client{
 		RootDir:            ".",
 		ReadLine:           textsecure.ConsoleReadLine,
@@ -167,7 +179,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if !echo {
+	if !options.Echo {
 		contacts, err := textsecure.GetRegisteredContacts()
 		if err != nil {
 			log.Printf("Could not get contacts: %s\n", err)
@@ -177,30 +189,30 @@ func main() {
 		for _, c := range contacts {
 			telToName[c.Tel] = c.Name
 		}
-	if fingerprint != "" {
-		textsecure.ShowFingerprint(fingerprint)
+	if options.Fingerprint != "" {
+		textsecure.ShowFingerprint(options.Fingerprint)
 		return
 	}
 
 		// If "to" matches a contact name then get its phone number, otherwise assume "to" is a phone number
 		for _, c := range contacts {
-			if strings.EqualFold(c.Name, to) {
-				to = c.Tel
+			if strings.EqualFold(c.Name, options.To) {
+				options.To = c.Tel
 				break
 			}
 		}
-		if to != "" {
+		if options.To != "" {
 			// Send attachment with optional message then exit
-			if attachment != "" {
-				err := textsecure.SendFileAttachment(to, message, attachment)
+			if options.Attachment != "" {
+				err := textsecure.SendFileAttachment(options.To, options.Message, options.Attachment)
 				if err != nil {
 					log.Fatal(err)
 				}
 				return
 			}
 			// Send a message then exit
-			if message != "" {
-				err := textsecure.SendMessage(to, message)
+			if options.Message != "" {
+				err := textsecure.SendMessage(options.To, options.Message)
 				if err != nil {
 					log.Fatal(err)
 				}

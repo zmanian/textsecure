@@ -22,7 +22,7 @@ type Config struct {
 	Fingerprint      string `yaml:"fingerprint"`
 	SkipTLSCheck     bool   `yaml:"skipTLSCheck"`
 	VerificationType string `yaml:"verificationType"`
-	UnencryptedStorage bool   `yaml:"unencryptedStorage"` // Whether to store plaintext keys and session state (only for development)
+	UnencryptedStorage bool `yaml:"unencryptedStorage"` // Whether to store plaintext keys and session state (only for development)
 	StoragePassword string `yaml:"storagePassword"`
 
 }
