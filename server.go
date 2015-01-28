@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/zmanian/textsecure/axolotl"
@@ -29,7 +28,6 @@ var registrationInfo RegistrationInfo
 // Registration
 
 func requestCode(tel, method string) (string, error) {
-	log.Printf("Registering new phone number: %s", tel)
 	resp, err := transport.get(fmt.Sprintf("/v1/accounts/%s/code/%s", method, tel))
 	if err != nil {
 		return "", err
@@ -118,8 +116,7 @@ type jsonContact struct {
 func GetRegisteredContacts() ([]Contact, error) {
 	lc, err := loadLocalContacts()
 	if err != nil {
-		log.Printf("Could not get local contacts :%s\n", err)
-		return nil, err
+		return nil, fmt.Errorf("Could not get local contacts :%s\n", err)
 	}
 	tokens := make([]string, len(lc))
 	m := make(map[string]Contact)
@@ -197,25 +194,26 @@ type jsonMessage struct {
 	Relay              string `json:"relay,omitempty"`
 }
 
-func createMessage(msg string, groupID []byte, a *att) ([]byte, error) {
+func createMessage(msg *outgoingMessage) ([]byte, error) {
 	pmc := &textsecure.PushMessageContent{}
-	if msg != "" {
-		pmc.Body = &msg
+	if msg.msg != "" {
+		pmc.Body = &msg.msg
 	}
-	if a != nil {
+	if msg.attachment != nil {
 		pmc.Attachments = []*textsecure.PushMessageContent_AttachmentPointer{
 			&textsecure.PushMessageContent_AttachmentPointer{
-				Id:          &a.id,
-				ContentType: &a.ct,
-				Key:         a.keys,
+				Id:          &msg.attachment.id,
+				ContentType: &msg.attachment.ct,
+				Key:         msg.attachment.keys,
 			},
 		}
 	}
-	if groupID != nil {
-		typ := textsecure.PushMessageContent_GroupContext_DELIVER
+	if msg.group != nil {
 		pmc.Group = &textsecure.PushMessageContent_GroupContext{
-			Type: &typ,
-			Id:   groupID,
+			Id:      msg.group.id,
+			Type:    &msg.group.typ,
+			Name:    &msg.group.name,
+			Members: msg.group.members,
 		}
 	}
 	b, err := proto.Marshal(pmc)
@@ -254,11 +252,30 @@ func makePreKeyBundle(tel string) (*axolotl.PreKeyBundle, error) {
 	pkbs := make([]*axolotl.PreKeyBundle, ndev)
 
 	for i, d := range pkr.Devices {
-		pkbs[i], err = axolotl.NewPreKeyBundle(d.RegistrationID, d.DeviceID,
-			d.PreKey.ID, axolotl.NewECPublicKey(decodeKey(d.PreKey.PublicKey)),
-			int32(d.SignedPreKey.ID), axolotl.NewECPublicKey(decodeKey(d.SignedPreKey.PublicKey)),
-			decodeSignature(d.SignedPreKey.Signature),
-			axolotl.NewIdentityKey(decodeKey(pkr.IdentityKey)))
+		decPK, err := decodeKey(d.PreKey.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+
+		decSPK, err := decodeKey(d.SignedPreKey.PublicKey)
+		if err != nil {
+			return nil, err
+		}
+
+		decSig, err := decodeSignature(d.SignedPreKey.Signature)
+		if err != nil {
+			return nil, err
+		}
+
+		decIK, err := decodeKey(pkr.IdentityKey)
+		if err != nil {
+			return nil, err
+		}
+
+		pkbs[i], err = axolotl.NewPreKeyBundle(
+			d.RegistrationID, d.DeviceID, d.PreKey.ID,
+			axolotl.NewECPublicKey(decPK), int32(d.SignedPreKey.ID), axolotl.NewECPublicKey(decSPK),
+			decSig, axolotl.NewIdentityKey(decIK))
 		if err != nil {
 			return nil, err
 		}
@@ -273,15 +290,15 @@ type att struct {
 	keys []byte
 }
 
-func buildMessage(tel string, msg string, groupID []byte, a *att) ([]jsonMessage, error) {
+func buildMessage(msg *outgoingMessage) ([]jsonMessage, error) {
 	devid := uint32(1) //FIXME: support multiple destination devices
-	paddedMessage, err := createMessage(msg, groupID, a)
+	paddedMessage, err := createMessage(msg)
 	if err != nil {
 		return nil, err
 	}
-	recid := recID(tel)
+	recid := recID(msg.tel)
 	if !textSecureStore.ContainsSession(recid, devid) {
-		pkb, err := makePreKeyBundle(tel)
+		pkb, err := makePreKeyBundle(msg.tel)
 		if err != nil {
 			return nil, err
 		}
@@ -297,33 +314,37 @@ func buildMessage(tel string, msg string, groupID []byte, a *att) ([]jsonMessage
 		return nil, err
 	}
 
+	rrID, err := sc.GetRemoteRegistrationID()
+	if err != nil {
+		return nil, err
+	}
 	messages := []jsonMessage{{
 		Type:               messageType,
 		DestDeviceID:       devid,
-		DestRegistrationID: sc.GetRemoteRegistrationID(),
+		DestRegistrationID: rrID,
 		Body:               base64.StdEncoding.EncodeToString(encryptedMessage),
 	}}
 	return messages, nil
 }
 
-func sendMessage(tel, msg string, groupID []byte, a *att) error {
+func sendMessage(msg *outgoingMessage) error {
 	m := make(map[string]interface{})
-	bm, err := buildMessage(tel, msg, groupID, a)
+	bm, err := buildMessage(msg)
 	if err != nil {
 		return err
 	}
 	m["messages"] = bm
-	m["destination"] = tel
+	m["destination"] = msg.tel
 	body, err := json.MarshalIndent(m, "", "    ")
 	if err != nil {
 		return err
 	}
-	resp, err := transport.putJSON("/v1/messages/"+tel, body)
+	resp, err := transport.putJSON("/v1/messages/"+msg.tel, body)
 	if err != nil {
 		return err
 	}
 	if resp.Status == 410 {
-		textSecureStore.DeleteSession(recID(tel), uint32(1))
+		textSecureStore.DeleteSession(recID(msg.tel), uint32(1))
 		return errors.New("The remote device is gone (probably reinstalled)")
 	}
 	if resp.isError() {

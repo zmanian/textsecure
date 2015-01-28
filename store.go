@@ -6,6 +6,7 @@ package textsecure
 import (
 	"bytes"
 	"crypto/sha1"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -16,8 +17,6 @@ import (
 	"github.com/zmanian/textsecure/axolotl"
 	"golang.org/x/crypto/pbkdf2"
 )
-
-//FIXME: too manic panic calls, bubble up errors
 
 var (
 	storageDir string
@@ -85,25 +84,25 @@ func idToFilename(id uint32) string {
 	return fmt.Sprintf("%09d", id)
 }
 
-func filenameToID(fname string) uint32 {
+func filenameToID(fname string) (uint32, error) {
 	var id uint32
 	_, err := fmt.Sscanf(fname, "%d", &id)
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
-	return uint32(id)
+	return uint32(id), nil
 }
 
-func (s *store) readNumFromFile(path string) uint32 {
+func (s *store) readNumFromFile(path string) (uint32, error) {
 	b, err := s.readFile(path)
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
 	num, err := strconv.Atoi(string(b))
 	if err != nil {
-		panic(err)
+		return 0, err
 	}
-	return uint32(num)
+	return uint32(num), nil
 }
 
 func (s *store) writeNumToFile(path string, num uint32) {
@@ -122,14 +121,27 @@ func (s *store) encrypt(plaintext []byte) ([]byte, error) {
 		return plaintext, nil
 	}
 
-	return aesEncrypt(s.aesKey, plaintext)
+	e, err := aesEncrypt(s.aesKey, plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	return appendMAC(s.macKey, e), nil
 }
 
 func (s *store) decrypt(ciphertext []byte) ([]byte, error) {
 	if s.unencrypted {
 		return ciphertext, nil
 	}
-	return aesDecrypt(s.aesKey, ciphertext)
+
+	macPos := len(ciphertext) - 32
+
+	if !verifyMAC(s.macKey, ciphertext[:macPos], ciphertext[macPos:]) {
+		return nil, errors.New("Wrong MAC calculated, possibly due to wrong passphrase")
+	}
+
+	return aesDecrypt(s.aesKey, ciphertext[:macPos])
+
 }
 
 func (s *store) readFile(path string) ([]byte, error) {
@@ -151,7 +163,7 @@ func (s *store) writeFile(path string, b []byte) error {
 
 // Identity store
 
-func (s *store) GetLocalRegistrationID() uint32 {
+func (s *store) GetLocalRegistrationID() (uint32, error) {
 	regidfile := filepath.Join(s.identityDir, "regid")
 	return s.readNumFromFile(regidfile)
 }
@@ -161,13 +173,16 @@ func (s *store) SetLocalRegistrationID(id uint32) {
 	s.writeNumToFile(regidfile, id)
 }
 
-func (s *store) GetIdentityKeyPair() *axolotl.IdentityKeyPair {
+func (s *store) GetIdentityKeyPair() (*axolotl.IdentityKeyPair, error) {
 	idkeyfile := filepath.Join(s.identityDir, "identity_key")
 	b, err := s.readFile(idkeyfile)
-	if err != nil || len(b) != 64 {
-		panic(err)
+	if err != nil {
+		return nil, err
 	}
-	return axolotl.NewIdentityKeyPairFromKeys(b[32:], b[:32])
+	if len(b) != 64 {
+		return nil, fmt.Errorf("Identity key is %d not 64 bytes long", len(b))
+	}
+	return axolotl.NewIdentityKeyPairFromKeys(b[32:], b[:32]), nil
 }
 
 func (s *store) GetUserIdentityKeyPair(id string) *axolotl.IdentityKeyPair {
@@ -182,23 +197,17 @@ func (s *store) GetUserIdentityKeyPair(id string) *axolotl.IdentityKeyPair {
 	return axolotl.NewIdentityKeyPairFromKeys(b[32:], b[:32])
 }
 
-func (s *store) SetIdentityKeyPair(ikp *axolotl.IdentityKeyPair) {
+func (s *store) SetIdentityKeyPair(ikp *axolotl.IdentityKeyPair) error {
 	idkeyfile := filepath.Join(s.identityDir, "identity_key")
 	b := make([]byte, 64)
 	copy(b, ikp.PublicKey.Key()[:])
 	copy(b[32:], ikp.PrivateKey.Key()[:])
-	err := s.writeFile(idkeyfile, b)
-	if err != nil {
-		panic(err)
-	}
+	return s.writeFile(idkeyfile, b)
 }
 
-func (s *store) SaveIdentity(id string, key *axolotl.IdentityKey) {
+func (s *store) SaveIdentity(id string, key *axolotl.IdentityKey) error {
 	idkeyfile := filepath.Join(s.identityDir, "remote_"+id)
-	err := s.writeFile(idkeyfile, key.Key()[:])
-	if err != nil {
-		panic(err)
-	}
+	return s.writeFile(idkeyfile, key.Key()[:])
 }
 
 func (s *store) IsTrustedIdentity(id string, key *axolotl.IdentityKey) bool {
@@ -230,7 +239,10 @@ func (s *store) LoadPreKey(id uint32) (*axolotl.PreKeyRecord, error) {
 		return nil, err
 	}
 
-	record := axolotl.LoadPreKeyRecord(b)
+	record, err := axolotl.LoadPreKeyRecord(b)
+	if err != nil {
+		return nil, err
+	}
 
 	return record, nil
 }
@@ -255,20 +267,20 @@ func (s *store) LoadSignedPreKeys() []axolotl.SignedPreKeyRecord {
 	return keys
 }
 
-func (s *store) StorePreKey(id uint32, record *axolotl.PreKeyRecord) {
-	b := record.Serialize()
-	err := s.writeFile(s.preKeysFilePath(id), b)
+func (s *store) StorePreKey(id uint32, record *axolotl.PreKeyRecord) error {
+	b, err := record.Serialize()
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return s.writeFile(s.preKeysFilePath(id), b)
 }
 
-func (s *store) StoreSignedPreKey(id uint32, record *axolotl.SignedPreKeyRecord) {
-	b := record.Serialize()
-	err := s.writeFile(s.signedPreKeysFilePath(id), b)
+func (s *store) StoreSignedPreKey(id uint32, record *axolotl.SignedPreKeyRecord) error {
+	b, err := record.Serialize()
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return s.writeFile(s.signedPreKeysFilePath(id), b)
 }
 
 func exists(path string) bool {
@@ -302,13 +314,13 @@ func (s *store) storeHTTPPassword(password string) {
 	s.writeFile(passFile, []byte(password))
 }
 
-func (s *store) loadHTTPPassword() string {
+func (s *store) loadHTTPPassword() (string, error) {
 	passFile := filepath.Join(s.identityDir, "http_password")
 	b, err := s.readFile(passFile)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
-	return string(b)
+	return string(b), nil
 }
 
 func (s *store) storeHTTPSignalingKey(key []byte) {
@@ -316,13 +328,13 @@ func (s *store) storeHTTPSignalingKey(key []byte) {
 	s.writeFile(keyFile, key)
 }
 
-func (s *store) loadHTTPSignalingKey() []byte {
+func (s *store) loadHTTPSignalingKey() ([]byte, error) {
 	keyFile := filepath.Join(s.identityDir, "http_signaling_key")
 	b, err := s.readFile(keyFile)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return b
+	return b, nil
 }
 
 // Session store
@@ -345,24 +357,27 @@ func (s *store) GetSubDeviceSessions(recipientID string) []uint32 {
 	return sessions
 }
 
-func (s *store) LoadSession(recipientID string, deviceID uint32) *axolotl.SessionRecord {
+func (s *store) LoadSession(recipientID string, deviceID uint32) (*axolotl.SessionRecord, error) {
 	sfile := s.sessionFilePath(recipientID, deviceID)
 	b, err := s.readFile(sfile)
 	if err != nil {
-		return axolotl.NewSessionRecord()
+		return axolotl.NewSessionRecord(), nil
 	}
-	record := axolotl.LoadSessionRecord(b)
+	record, err := axolotl.LoadSessionRecord(b)
+	if err != nil {
+		return nil, err
+	}
 
-	return record
+	return record, nil
 }
 
-func (s *store) StoreSession(recipientID string, deviceID uint32, record *axolotl.SessionRecord) {
+func (s *store) StoreSession(recipientID string, deviceID uint32, record *axolotl.SessionRecord) error {
 	sfile := s.sessionFilePath(recipientID, deviceID)
-	b := record.Serialize()
-	err := s.writeFile(sfile, b)
+	b, err := record.Serialize()
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return s.writeFile(sfile, b)
 }
 
 func (s *store) ContainsSession(recipientID string, deviceID uint32) bool {
@@ -392,11 +407,7 @@ func setupStore() error {
 	if !config.UnencryptedStorage {
 		password = config.StoragePassword
 		if password == "" {
-			if client.GetStoragePassword != nil {
-				password = client.GetStoragePassword()
-			} else {
-				password = readLine("Enter store password (empty for unencrypted storage):")
-			}
+			password = client.GetStoragePassword()
 		}
 	}
 

@@ -65,11 +65,11 @@ func generateSignedPreKeyEntity(record *axolotl.SignedPreKeyRecord) *signedPreKe
 
 var preKeyRecords []*axolotl.PreKeyRecord
 
-func generatePreKey(id uint32) *axolotl.PreKeyRecord {
+func generatePreKey(id uint32) error {
 	kp := axolotl.NewECKeyPair()
 	record := axolotl.NewPreKeyRecord(id, kp)
-	textSecureStore.StorePreKey(id, record)
-	return record
+	err := textSecureStore.StorePreKey(id, record)
+	return err
 }
 
 var signedKey *axolotl.SignedPreKeyRecord
@@ -82,15 +82,22 @@ func getNextPreKeyID() uint32 {
 	return randID()
 }
 
-func generatePreKeys() {
+func generatePreKeys() error {
 	os.MkdirAll(textSecureStore.preKeysDir, 0700)
 
 	startID := getNextPreKeyID()
 	for i := 0; i < preKeyBatchSize; i++ {
-		generatePreKey(startID + uint32(i))
+		err := generatePreKey(startID + uint32(i))
+		if err != nil {
+			return err
+		}
 	}
-	generatePreKey(lastResortPreKeyID)
+	err := generatePreKey(lastResortPreKeyID)
+	if err != nil {
+		return err
+	}
 	signedKey = generateSignedPreKey()
+	return nil
 }
 
 func getNextSignedPreKeyID() uint32 {
@@ -109,8 +116,11 @@ func generateSignedPreKey() *axolotl.SignedPreKeyRecord {
 	return record
 }
 
-func generatePreKeyState() {
-	loadPreKeys()
+func generatePreKeyState() error {
+	err := loadPreKeys()
+	if err != nil {
+		return err
+	}
 	preKeys = &preKeyState{}
 	npkr := len(preKeyRecords)
 	preKeys.PreKeys = make([]*preKeyEntity, npkr-1)
@@ -120,21 +130,25 @@ func generatePreKeyState() {
 	preKeys.LastResortKey = generatepreKeyEntity(preKeyRecords[npkr-1])
 	preKeys.IdentityKey = base64EncWithoutPadding(identityKey.PublicKey.Serialize())
 	preKeys.SignedPreKey = generateSignedPreKeyEntity(signedKey)
-
+	return nil
 }
 
-func loadPreKeys() {
+func loadPreKeys() error {
 	preKeyRecords = []*axolotl.PreKeyRecord{}
 	count := 0
-	filepath.Walk(textSecureStore.preKeysDir, func(path string, fi os.FileInfo, err error) error {
+	err := filepath.Walk(textSecureStore.preKeysDir, func(path string, fi os.FileInfo, err error) error {
 		if !fi.IsDir() {
 			preKeyRecords = append(preKeyRecords, &axolotl.PreKeyRecord{}) //FIXME
 			_, fname := filepath.Split(path)
-			id := filenameToID(fname)
+			id, err := filenameToID(fname)
+			if err != nil {
+				return err
+			}
 			preKeyRecords[count], _ = textSecureStore.LoadPreKey(uint32(id))
 			count++
 		}
 		return nil
 
 	})
+	return err
 }

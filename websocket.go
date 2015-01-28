@@ -98,7 +98,7 @@ func (wsc *wsConn) receive() ([]byte, error) {
 	return b, nil
 }
 
-func (wsc *wsConn) sendRequest(verb, path string, body []byte, id *uint64) {
+func (wsc *wsConn) sendRequest(verb, path string, body []byte, id *uint64) error {
 	typ := textsecure.WebSocketMessage_REQUEST
 
 	wsm := &textsecure.WebSocketMessage{
@@ -113,20 +113,23 @@ func (wsc *wsConn) sendRequest(verb, path string, body []byte, id *uint64) {
 
 	b, err := proto.Marshal(wsm)
 	if err != nil {
-		log.Printf("WebSocketMessage marshal error in sendRequest: %s", err)
-		return
+		return err
 	}
 	wsc.send(b)
+	return nil
 }
 
 func (wsc *wsConn) keepAlive() {
 	for {
-		wsc.sendRequest("GET", "/v1/keepalive", nil, nil)
+		err := wsc.sendRequest("GET", "/v1/keepalive", nil, nil)
+		if err != nil {
+			log.Println(err)
+		}
 		time.Sleep(time.Second * 15)
 	}
 }
 
-func (wsc *wsConn) sendAck(id uint64) {
+func (wsc *wsConn) sendAck(id uint64) error {
 	typ := textsecure.WebSocketMessage_RESPONSE
 	message := "OK"
 	status := uint32(200)
@@ -142,9 +145,10 @@ func (wsc *wsConn) sendAck(id uint64) {
 
 	b, err := proto.Marshal(wsm)
 	if err != nil {
-		log.Println("Could not marshal ack message", err)
+		return err
 	}
 	wsc.send(b)
+	return nil
 }
 
 func (wsc *wsConn) get(url string) (*response, error) {
@@ -180,7 +184,7 @@ func ListenForMessages() error {
 		wsm := &textsecure.WebSocketMessage{}
 		err = proto.Unmarshal(bmsg, wsm)
 		if err != nil {
-			log.Println("WebSocketMessage unmarshal", err)
+			log.Println(err)
 			continue
 		}
 		if config.Server == "https://textsecure-service-staging.whispersystems.org:443" {
@@ -205,6 +209,9 @@ func ListenForMessages() error {
 				}
 			}
 		}
-		wsc.sendAck(wsm.GetRequest().GetId())
+		err = wsc.sendAck(wsm.GetRequest().GetId())
+		if err != nil {
+			log.Println(err)
+		}
 	}
 }

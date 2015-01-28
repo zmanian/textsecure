@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"github.com/jessevdk/go-flags"
 	"github.com/zmanian/textsecure"
+	"github.com/zmanian/textsecure/axolotl"
 	"golang.org/x/crypto/ssh/terminal"
 	"io/ioutil"
 	"log"
+	"os"
 	"strings"
 )
 
@@ -39,6 +42,10 @@ type Options struct {
 
 	Group bool `short:"g" long:"group" description:"Destination is a group" default:"false"`
 
+	NewGroup string `short:"ng" long:"newgroup" description:"Create a group, the argument has the format 'name:member1:member2'" default:""`
+
+	LeaveGroup string `short:"lg" long:"leavegroup" description:"Leave a group named by the argument" default:""`
+
 	Message string `short:"m" long:"message" description:"Single message to send, then exit" default:""`
 
 	Attachment string `short:"a" long:"attachment" description:"File to attach" default:""`
@@ -55,6 +62,20 @@ var (
 	blue  = "\x1b[34m"
 )
 
+func readLine(prompt string) string {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print(prompt)
+	text, _, err := reader.ReadLine()
+	if err != nil {
+		log.Fatal("Cannot read line from console: ", err)
+	}
+	return string(text)
+}
+
+func getVerificationCode() string {
+	return readLine("Enter verification code>")
+}
+
 func getStoragePassword() string {
 	fmt.Printf("Input storage password>")
 	password, err := terminal.ReadPassword(0)
@@ -65,19 +86,29 @@ func getStoragePassword() string {
 	return string(password)
 }
 
+func sendMessage(isGroup bool, to, message string) error {
+	var err error
+	if isGroup {
+		err = textsecure.SendGroupMessage(to, message)
+	} else {
+		err = textsecure.SendMessage(to, message)
+		if nerr, ok := err.(axolotl.NotTrustedError); ok {
+			log.Fatalf("Peer identity not trusted. Remove the file .storage/identity/remote_%s to approve\n", nerr.ID)
+		}
+	}
+	return err
+}
+
 // conversationLoop sends messages read from the console
 func conversationLoop(isGroup bool) {
 	for {
-		message := textsecure.ConsoleReadLine(fmt.Sprintf("%s%s>", blue, activeSession.to))
+		message := readLine(fmt.Sprintf("%s>", blue))
 		if message == "" {
 			continue
 		}
-		var err error
-		if isGroup {
-			err = textsecure.SendGroupMessage(activeSession.to, message)
-		} else {
-			err = textsecure.SendMessage(activeSession.to, message)
-		}
+
+		err := sendMessage(isGroup, activeSession.to, message)
+
 		if err != nil {
 			log.Println(err)
 		}
@@ -86,11 +117,12 @@ func conversationLoop(isGroup bool) {
 
 func messageHandler(msg *textsecure.Message) {
 	if options.Echo {
-		if msg.Group() != "" {
-			textsecure.SendGroupMessage(msg.Group(), msg.Message())
-			return
+		to := msg.Group()
+		if to == "" {
+			to = msg.Source()
 		}
-		err := textsecure.SendMessage(msg.Source(), msg.Message())
+		err := sendMessage(msg.Group() != "", to, msg.Message())
+
 		if err != nil {
 			log.Println(err)
 		}
@@ -165,10 +197,10 @@ func main() {
 	}
 
 	client := &textsecure.Client{
-		RootDir:            ".",
-		ReadLine:           textsecure.ConsoleReadLine,
-		GetStoragePassword: getStoragePassword,
-		MessageHandler:     messageHandler,
+		RootDir:             ".",
+		GetVerificationCode: getVerificationCode,
+		GetStoragePassword:  getStoragePassword,
+		MessageHandler:      messageHandler,
 	}
 	err := textsecure.Setup(client)
 	if err != nil {
@@ -190,6 +222,15 @@ func main() {
 			return
 		}
 
+		if options.NewGroup != "" {
+			s := strings.Split(options.NewGroup, ":")
+			textsecure.NewGroup(s[0], s[1:])
+			return
+		}
+		if options.LeaveGroup != "" {
+			textsecure.LeaveGroup(options.LeaveGroup)
+			return
+		}
 		// If "to" matches a contact name then get its phone number, otherwise assume "to" is a phone number
 		for _, c := range contacts {
 			if strings.EqualFold(c.Name, options.To) {
@@ -207,8 +248,9 @@ func main() {
 				return
 			}
 			// Send a message then exit
+
 			if options.Message != "" {
-				err := textsecure.SendMessage(options.To, options.Message)
+				err := sendMessage(options.Group, options.To, options.Message)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -216,7 +258,7 @@ func main() {
 			}
 
 			// Enter conversation mode
-			go conversationLoop(false)
+			go conversationLoop(options.Group)
 		}
 	}
 
